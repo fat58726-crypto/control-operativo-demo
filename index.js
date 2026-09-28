@@ -15,8 +15,8 @@ const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || process.env.ADMIN_TELEGRAM_
   .filter(s => s.length > 0);
  
 // Los IDs de las hojas ahora se configuran en Railway (Variables)
-const SHEET_BOT    = process.env.SHEET_BOT_ID;
-const SHEET_DIESEL = process.env.SHEET_DIESEL_ID;
+const SHEET_BOT    = (process.env.SHEET_BOT_ID || '').trim();
+const SHEET_DIESEL = (process.env.SHEET_DIESEL_ID || '').trim();
  
 const bot = new TelegramBot(TOKEN, { webHook: false });
 const app = express();
@@ -1078,7 +1078,7 @@ app.listen(PORT, async () => {
     const wh = `${WEBHOOK_URL}/bot${TOKEN}`;
     // allowed_updates: necesario para recibir las actualizaciones de ubicación en vivo
     await bot.setWebHook(wh, { allowed_updates: JSON.stringify(['message', 'edited_message', 'callback_query']) });
-    console.log(`✅ Webhook: ${wh}`);
+    console.log(`✅ Webhook configurado en: ${WEBHOOK_URL}/bot***`);
   } catch(e) {
     console.error('❌ Error webhook:', e.message);
   }
