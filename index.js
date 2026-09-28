@@ -14,14 +14,15 @@ const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || process.env.ADMIN_TELEGRAM_
   .map(s => s.trim().replace(/[^0-9]/g, ''))
   .filter(s => s.length > 0);
  
-const SHEET_BOT    = '1i7uciYXLNuZ-DPxE8H0TAQyuegqVzegE751tUNhi7Qc';
-const SHEET_DIESEL = '1tEmPW1BGE7MgMXD5iOsLwq8G46GxKkT8sRuqBkdFUOk';
+// Los IDs de las hojas ahora se configuran en Railway (Variables)
+const SHEET_BOT    = process.env.SHEET_BOT_ID;
+const SHEET_DIESEL = process.env.SHEET_DIESEL_ID;
  
 const bot = new TelegramBot(TOKEN, { webHook: false });
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (_req, res) => res.send('🚛 Bot Transportes Regis activo'));
+app.get('/', (_req, res) => res.send('🚛 Plataforma de Control Operativo activa'));
 app.post(`/bot${TOKEN}`, (req, res) => { bot.processUpdate(req.body); res.sendStatus(200); });
  
 // ── GOOGLE SHEETS ─────────────────────────────────────────
@@ -103,15 +104,16 @@ function notificarAdminsFoto(fileId, caption) {
  
 // ── MENÚS ─────────────────────────────────────────────────
 const MENU_OP = { reply_markup: { inline_keyboard: [
-  [{ text: '✅ Confirmar mi viaje',  callback_data: 'confirmar_viaje' }],
-  [{ text: '💰 Reportar mis gastos', callback_data: 'iniciar_gastos'  }],
-  [{ text: '📦 Registrar carga',     callback_data: 'iniciar_carga'   }],
+  [{ text: '✅ Confirmar mi viaje',     callback_data: 'confirmar_viaje'   }],
+  [{ text: '💰 Reportar mis gastos',    callback_data: 'iniciar_gastos'    }],
+  [{ text: '📦 Registrar carga',        callback_data: 'iniciar_carga'     }],
+  [{ text: '📍 Compartir mi ubicación', callback_data: 'iniciar_ubicacion' }],
 ]}};
  
 const MENU_ADMIN = { reply_markup: { inline_keyboard: [
   [{ text: '📋 Ver viajes',       callback_data: 'ver_viajes'     }, { text: '➕ Nuevos viajes', callback_data: 'nuevos_viajes' }],
   [{ text: '👥 Operadores',       callback_data: 'ver_operadores' }, { text: '⛽ Diésel',        callback_data: 'iniciar_diesel' }],
-  [{ text: '📊 Resumen',          callback_data: 'ver_resumen'    }],
+  [{ text: '📊 Resumen',          callback_data: 'ver_resumen'    }, { text: '🗺️ Mapa en vivo',  callback_data: 'ver_mapa'       }],
 ]}};
  
 const BTN_CANCELAR         = { reply_markup: { inline_keyboard: [[{ text: '❌ Cancelar', callback_data: 'cancelar' }]] }};
@@ -270,7 +272,7 @@ bot.onText(/\/start/, async (msg) => {
   if (op) {
     bot.sendMessage(chatId, `👋 Hola *${op.nombre}* 🚛\n\n¿Qué necesitas?`, { parse_mode:'Markdown', ...MENU_OP });
   } else {
-    bot.sendMessage(chatId, `👋 Bienvenido al Bot de Transportes Regis 🚛\n\nRegístrate con:\n/registrar NOMBRE TRACTO\n\nEjemplo:\n/registrar Rafael 9`);
+    bot.sendMessage(chatId, `👋 Bienvenido a la Plataforma de Control Operativo 🚛\n\nRegístrate con:\n/registrar NOMBRE TRACTO\n\nEjemplo:\n/registrar Rafael 9`);
   }
 });
  
@@ -441,6 +443,29 @@ bot.on('callback_query', async (query) => {
       return;
     }
  
+    // ── UBICACIÓN EN VIVO (operador) ──
+    if (data === 'iniciar_ubicacion') {
+      const ops = await getOperadores();
+      const op  = ops[String(chatId)];
+      if (!op) return bot.sendMessage(chatId, '❌ No estás registrado.\nUsa /registrar NOMBRE TRACTO');
+      bot.sendMessage(chatId,
+        '📍 Para compartir tu ubicación en vivo:\n\n' +
+        '1. Toca el clip 📎 (adjuntar)\n' +
+        '2. Elige "Ubicación"\n' +
+        '3. Elige "Compartir ubicación en vivo"\n' +
+        '4. Selecciona "8 horas"\n\n' +
+        'Cuando termines tu jornada, toca "Dejar de compartir" en ese mensaje.', MENU_OP);
+      return;
+    }
+ 
+    // ── MAPA EN VIVO (admin) ──
+    if (data === 'ver_mapa') {
+      if (!isAdmin(chatId)) return;
+      const base = process.env.WEBHOOK_URL || '';
+      bot.sendMessage(chatId, '🗺️ Mapa en vivo:\n' + base + '/mapa?token=' + tokenMapa(), MENU_ADMIN);
+      return;
+    }
+ 
     if (data === 'gastos_ok') {
       const st = await getEstado(chatId);
       if (!st || st.estado !== 'gastos_revision') return;
@@ -607,7 +632,7 @@ bot.on('message', async (msg) => {
             notificarAdmins(`📝 ${archivo.texto}`, {});
           }
         }
-        bot.sendMessage(chatId, `✅ Listo, le avisé a Fabiola 👍\n\n¡Buen viaje! 🚛`, { parse_mode:'Markdown', ...MENU_OP });
+        bot.sendMessage(chatId, `✅ Listo, ya le avisé al administrador 👍\n\n¡Buen viaje! 🚛`, { parse_mode:'Markdown', ...MENU_OP });
         return;
       }
       const nuevosArchivos = [...(archivos||[]), { tipo: 'texto', texto: msg.text }];
@@ -744,6 +769,131 @@ async function guardarDiesel(chatId, fotoFileId, d) {
   if (fotoFileId) notificarAdminsFoto(fotoFileId, `⛽ Vale — ${d.operador} | Tracto #${d.tracto} | ${fecha}`);
   notificarAdmins(`⛽ *Diésel* — ${d.operador} | Tracto #${d.tracto} | KM: ${difKM} | ${rend} km/lt | Vale #${d.vale}`, { parse_mode:'Markdown' });
 }
+ 
+// ═══════════════════════════════════════════════════════════
+//   UBICACIÓN EN VIVO + MAPA
+// ═══════════════════════════════════════════════════════════
+const ubicaciones = new Map(); // chatId -> { nombre, tracto, lat, lng, ts }
+function tokenMapa() { return process.env.DASHBOARD_TOKEN || 'regis2024'; }
+ 
+async function procesarUbicacion(msg, esEdicion) {
+  if (!msg.location) return;
+  const chatId = String(msg.chat.id);
+  if (isAdmin(chatId)) return;
+  const previo = ubicaciones.get(chatId);
+  let nombre = previo && previo.nombre;
+  let tracto = previo && previo.tracto;
+  if (!nombre) {
+    const ops = await getOperadores();
+    const op  = ops[chatId];
+    if (!op) {
+      if (!esEdicion) bot.sendMessage(chatId, '❌ No estás registrado.\nUsa /registrar NOMBRE TRACTO');
+      return;
+    }
+    nombre = op.nombre;
+    tracto = op.tracto;
+  }
+  ubicaciones.set(chatId, { nombre, tracto, lat: msg.location.latitude, lng: msg.location.longitude, ts: Date.now() });
+  if (!previo && !esEdicion) {
+    bot.sendMessage(chatId, '📍 Ubicación recibida. Ya apareces en el mapa.', MENU_OP);
+    notificarAdmins('📍 ' + nombre + ' (Tracto #' + tracto + ') empezó a compartir su ubicación.');
+  }
+}
+ 
+// Ubicación normal o primer mensaje de ubicación en vivo
+bot.on('location', (msg) => {
+  procesarUbicacion(msg, false).catch(e => console.error('Error ubicación:', e.message));
+});
+ 
+// Cada actualización de la ubicación en vivo llega como mensaje editado
+bot.on('edited_message', (msg) => {
+  if (msg.location) procesarUbicacion(msg, true).catch(e => console.error('Error ubicación edit:', e.message));
+});
+ 
+app.get('/api/admin/ubicaciones', (req, res) => {
+  if (req.query.token !== tokenMapa()) return res.status(401).json({ ok: false });
+  res.json({ ok: true, ahora: Date.now(), ubicaciones: Array.from(ubicaciones.values()) });
+});
+ 
+app.get('/mapa', (req, res) => {
+  if (req.query.token !== tokenMapa()) return res.status(401).send('No autorizado');
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mapa en vivo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; }
+  #mapa { height: 100%; width: 100%; }
+  #estado { position: absolute; top: 10px; left: 50px; z-index: 1000; background: white; padding: 6px 12px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="estado">Cargando...</div>
+<div id="mapa"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var token = new URLSearchParams(location.search).get('token') || '';
+  var map = L.map('mapa').setView([23.6345, -102.5528], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+  var marcadores = {};
+  var primeraCarga = true;
+ 
+  function esc(t) {
+    return String(t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+ 
+  function colorPorEdad(min) {
+    if (min < 5) return '#2a9d8f';
+    if (min < 30) return '#f4a261';
+    return '#8d99ae';
+  }
+ 
+  async function actualizar() {
+    try {
+      var r = await fetch('/api/admin/ubicaciones?token=' + encodeURIComponent(token));
+      if (!r.ok) throw new Error('error');
+      var datos = await r.json();
+      var lista = datos.ubicaciones;
+      document.getElementById('estado').textContent =
+        lista.length + ' operador(es) con ubicación - actualizado ' + new Date().toLocaleTimeString();
+ 
+      lista.forEach(function (u) {
+        var min = Math.round((datos.ahora - u.ts) / 60000);
+        var texto = '<b>' + esc(u.nombre) + '</b><br>Tracto #' + esc(u.tracto) + '<br>Hace ' + min + ' min';
+        var color = colorPorEdad(min);
+        var clave = u.nombre + '|' + u.tracto;
+        if (marcadores[clave]) {
+          marcadores[clave].setLatLng([u.lat, u.lng]);
+          marcadores[clave].setStyle({ fillColor: color });
+          marcadores[clave].setPopupContent(texto);
+        } else {
+          marcadores[clave] = L.circleMarker([u.lat, u.lng], {
+            radius: 11, fillColor: color, color: '#ffffff', weight: 2, opacity: 1, fillOpacity: 1
+          }).addTo(map).bindPopup(texto);
+        }
+      });
+ 
+      if (primeraCarga && lista.length > 0) {
+        var grupo = L.featureGroup(Object.values(marcadores));
+        map.fitBounds(grupo.getBounds().pad(0.3), { maxZoom: 13 });
+        primeraCarga = false;
+      }
+    } catch (e) {
+      document.getElementById('estado').textContent = 'No se pudo actualizar (reintentando...)';
+    }
+  }
+ 
+  actualizar();
+  setInterval(actualizar, 15000);
+</script>
+</body>
+</html>`);
+});
  
 // ── ERRORES GLOBALES ──────────────────────────────────────
 bot.on('error', e => console.error('Bot error:', e.message));
@@ -919,11 +1069,15 @@ app.listen(PORT, async () => {
     console.error('❌ Falta WEBHOOK_URL en variables de entorno.');
     return;
   }
+  if (!SHEET_BOT || !SHEET_DIESEL) {
+    console.error('❌ Faltan SHEET_BOT_ID o SHEET_DIESEL_ID en variables de entorno.');
+  }
   try {
     await bot.deleteWebHook();
     await new Promise(r => setTimeout(r, 1000));
     const wh = `${WEBHOOK_URL}/bot${TOKEN}`;
-    await bot.setWebHook(wh);
+    // allowed_updates: necesario para recibir las actualizaciones de ubicación en vivo
+    await bot.setWebHook(wh, { allowed_updates: JSON.stringify(['message', 'edited_message', 'callback_query']) });
     console.log(`✅ Webhook: ${wh}`);
   } catch(e) {
     console.error('❌ Error webhook:', e.message);
