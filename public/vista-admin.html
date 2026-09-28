@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Operativo</title>
+<style>
+  :root {
+    --fondo: #f3f5f4; --panel: #ffffff; --tinta: #1c2b2d; --suave: #5f6f70;
+    --linea: #dde3e2; --marca: #0f5c63; --marca-osc: #0b444a; --ok: #2a8a5b; --alerta: #c2410c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--tinta); font-size: 15px; line-height: 1.45; }
+  header { background: var(--marca); color: #fff; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: .2px; }
+  header small { opacity: .8; display: block; font-weight: 400; font-size: 13px; }
+  header a { color: #fff; background: var(--marca-osc); padding: 8px 14px; border-radius: 6px; text-decoration: none; font-size: 14px; }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; overflow-x: auto; border-bottom: 1px solid var(--linea); background: var(--panel); }
+  nav button { border: 0; background: none; padding: 10px 14px; font: inherit; color: var(--suave); cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav button:hover { color: var(--tinta); }
+  nav button.on { color: var(--marca); border-bottom-color: var(--marca); font-weight: 600; }
+  nav button:focus-visible, header a:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--marca); outline-offset: 2px; }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; padding: 14px 16px; }
+  .kpi b { display: block; font-size: 28px; line-height: 1.1; color: var(--marca); }
+  .kpi span { color: var(--suave); font-size: 13px; }
+  h2 { font-size: 16px; margin: 22px 0 10px; }
+  .caja { background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 560px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--linea); }
+  th { font-size: 13px; color: var(--suave); font-weight: 600; background: #f8faf9; }
+  tr:last-child td { border-bottom: 0; }
+  .ok { color: var(--ok); font-weight: 600; } .mal { color: var(--alerta); font-weight: 600; }
+  .vacio { padding: 26px; text-align: center; color: var(--suave); }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--suave); }
+  input, select { font: inherit; padding: 9px 10px; border: 1px solid var(--linea); border-radius: 6px; color: var(--tinta); background: #fff; }
+  .btn { font: inherit; background: var(--marca); color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; cursor: pointer; align-self: end; }
+  .btn:hover { background: var(--marca-osc); }
+  #aviso { margin: 0 0 12px; font-size: 14px; }
+  @media (max-width: 600px) { main { padding: 12px; } header, nav { padding-left: 12px; padding-right: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Control Operativo<small>Panel de administración</small></h1>
+  <a id="lnkMapa" href="#">Ver mapa en vivo</a>
+</header>
+<nav id="menu"></nav>
+<main id="vista"><p class="vacio">Cargando…</p></main>
+
+<script>
+var T = new URLSearchParams(location.search).get('token') || '';
+document.getElementById('lnkMapa').href = '/mapa?token=' + encodeURIComponent(T);
+
+var D = {}; // datos cargados
+var actual = 'resumen';
+var VISTAS = [
+  ['resumen', 'Resumen'], ['viajes', 'Viajes'], ['operadores', 'Operadores'],
+  ['gastos', 'Gastos'], ['diesel', 'Diésel'], ['remisiones', 'Remisiones'], ['cargas', 'Cargas']
+];
+
+function esc(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function money(n) { return '$' + (Number(n) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function suma(arr, k) { return arr.reduce(function (s, x) { return s + (Number(x[k]) || 0); }, 0); }
+
+async function api(ruta, opts) {
+  var r = await fetch(ruta + (ruta.indexOf('?') > -1 ? '&' : '?') + 'token=' + encodeURIComponent(T), opts);
+  if (r.status === 401) throw new Error('Contraseña incorrecta');
+  return r.json();
+}
+
+function tabla(cols, filas, msg) {
+  if (!filas.length) return '<div class="caja"><div class="vacio">' + esc(msg) + '</div></div>';
+  var h = '<div class="caja"><table><thead><tr>' + cols.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '</tr></thead><tbody>';
+  filas.forEach(function (f) { h += '<tr>' + f.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; });
+  return h + '</tbody></table></div>';
+}
+
+function kpi(n, t) { return '<div class="kpi"><b>' + esc(n) + '</b><span>' + esc(t) + '</span></div>'; }
+
+var render = {
+  resumen: function () {
+    var v = D.viajes || [], conf = v.filter(function (x) { return x.confirmado === 'si'; }).length;
+    var h = '<div class="kpis">' +
+      kpi((D.operadores || []).length, 'Operadores') +
+      kpi(v.length, 'Viajes registrados') +
+      kpi(conf, 'Viajes confirmados') +
+      kpi(v.length - conf, 'Viajes pendientes') +
+      kpi(money(suma(D.gastos || [], 'total')), 'Gastos reportados') +
+      kpi(suma(D.diesel || [], 'litros').toLocaleString('es-MX') + ' L', 'Diésel cargado') +
+      '</div><h2>Viajes recientes</h2>';
+    h += tabla(['Fecha', 'Cliente', 'Destino', 'Operador', 'Estado'],
+      v.slice(0, 6).map(function (x) { return [esc(x.fecha), esc(x.cliente), esc(x.destino), esc(x.operador || 'Sin asignar'), estado(x)]; }),
+      'Aún no hay viajes. Crea el primero en la pestaña Viajes.');
+    return h;
+  },
+  viajes: function () {
+    var ops = (D.operadores || []).map(function (o) { return '<option>' + esc(o.nombre) + '</option>'; }).join('');
+    var h = '<h2>Nuevo viaje</h2><p id="aviso"></p>' +
+      '<form id="fViaje">' +
+      '<label>Fecha<input name="fecha" placeholder="20/Abr" required></label>' +
+      '<label>Cliente<input name="cliente" required></label>' +
+      '<label>Destino<input name="destino" required></label>' +
+      '<label>Hora de salida<input name="hora" placeholder="8:00am o Sin cita"></label>' +
+      '<label>Operador<select name="operador"><option value="">Sin asignar</option>' + ops + '</select></label>' +
+      '<button class="btn" type="submit">Guardar viaje</button></form>' +
+      '<h2>Todos los viajes</h2>';
+    h += tabla(['#', 'Fecha', 'Cliente', 'Destino', 'Hora', 'Operador', 'Estado'],
+      (D.viajes || []).map(function (x) { return [esc(x.idx), esc(x.fecha), esc(x.cliente), esc(x.destino), esc(x.hora), esc(x.operador || 'Sin asignar'), estado(x)]; }),
+      'Aún no hay viajes.');
+    return h;
+  },
+  operadores: function () {
+    var m = D.marcador || [];
+    return '<h2>Operadores</h2>' + tabla(['Nombre', 'Tracto', 'Viajes confirmados'],
+      m.map(function (o) { return [esc(o.nombre), '#' + esc(o.tracto), esc(o.viajes)]; }),
+      'Aún no hay operadores. Cada operador se registra en el bot con /registrar NOMBRE TRACTO.');
+  },
+  gastos: function () {
+    var g = D.gastos || [];
+    return '<div class="kpis">' + kpi(money(suma(g, 'total')), 'Total gastado') + kpi(g.filter(function (x) { return x.diferencia < 0; }).length, 'Reportes sobre el anticipo') + '</div>' +
+      tabla(['Fecha', 'Operador', 'Cliente', 'Destino', 'Total', 'Diferencia'],
+        g.map(function (x) { return [esc(x.fecha), esc(x.operador), esc(x.cliente), esc(x.destino), money(x.total), '<span class="' + (x.diferencia >= 0 ? 'ok' : 'mal') + '">' + money(x.diferencia) + '</span>']; }),
+        'Aún no hay gastos reportados.');
+  },
+  diesel: function () {
+    var d = D.diesel || [];
+    return '<div class="kpis">' + kpi(suma(d, 'litros').toLocaleString('es-MX') + ' L', 'Litros cargados') + kpi(suma(d, 'kmRecorridos').toLocaleString('es-MX') + ' km', 'Kilómetros recorridos') + '</div>' +
+      tabla(['Fecha', 'Vale', 'Operador', 'Tracto', 'Km', 'Litros', 'Rendimiento km/L'],
+        d.map(function (x) { return [esc(x.fecha), esc(x.vale), esc(x.operador), '#' + esc(x.tracto), esc(x.kmRecorridos), esc(x.litros), esc(x.rendimiento)]; }),
+        'Aún no hay cargas de diésel.');
+  },
+  remisiones: function () {
+    var r = D.remisiones || [];
+    return tabla(['Fecha', 'Operador', 'Cliente', 'Destino', 'Datos', 'Fotos'],
+      r.map(function (x) { return [esc(x.fecha), esc(x.operador), esc(x.cliente), esc(x.destino), esc(x.datos), esc(x.tieneFotos)]; }),
+      'Aún no hay remisiones recibidas.');
+  },
+  cargas: function () {
+    var c = D.cargas || [];
+    return tabla(['Fecha', 'Operador', 'Lugar', 'Comida', 'Aguas'],
+      c.map(function (x) { return [esc(x.fecha), esc(x.operador), esc(x.lugar), money(x.comida), money(x.aguas)]; }),
+      'Aún no hay cargas registradas.');
+  }
+};
+
+function estado(v) { return v.confirmado === 'si' ? '<span class="ok">Confirmado</span>' : '<span class="mal">Pendiente</span>'; }
+
+function pintarMenu() {
+  document.getElementById('menu').innerHTML = VISTAS.map(function (v) {
+    return '<button data-v="' + v[0] + '" class="' + (v[0] === actual ? 'on' : '') + '">' + v[1] + '</button>';
+  }).join('');
+}
+
+function pintar() {
+  pintarMenu();
+  document.getElementById('vista').innerHTML = render[actual]();
+  var f = document.getElementById('fViaje');
+  if (f) f.addEventListener('submit', guardarViaje);
+}
+
+async function guardarViaje(e) {
+  e.preventDefault();
+  var datos = {};
+  new FormData(e.target).forEach(function (v, k) { datos[k] = v; });
+  var aviso = document.getElementById('aviso');
+  aviso.textContent = 'Guardando…';
+  try {
+    var r = await api('/api/admin/viaje', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) });
+    if (!r.ok) throw new Error(r.error || 'No se pudo guardar');
+    await cargar();
+    pintar();
+    document.getElementById('aviso').innerHTML = '<span class="ok">Viaje #' + esc(r.idx) + ' guardado.</span>';
+  } catch (err) {
+    aviso.innerHTML = '<span class="mal">' + esc(err.message) + '</span>';
+  }
+}
+
+async function cargar() {
+  var res = await Promise.all([api('/api/admin'), api('/api/admin/remisiones'), api('/api/admin/diesel'), api('/api/admin/cargas')]);
+  if (!res[0].ok) throw new Error(res[0].error || 'No se pudieron leer los datos');
+  D = { operadores: res[0].operadores, viajes: res[0].viajes, gastos: res[0].gastos, marcador: res[0].marcador,
+        remisiones: res[1].remisiones || [], diesel: res[2].diesel || [], cargas: res[3].cargas || [] };
+}
+
+document.getElementById('menu').addEventListener('click', function (e) {
+  var b = e.target.closest('button');
+  if (!b) return;
+  actual = b.getAttribute('data-v');
+  pintar();
+});
+
+cargar().then(pintar).catch(function (err) {
+  document.getElementById('vista').innerHTML = '<p class="vacio">' + esc(err.message) + '. Revisa que la dirección lleve ?token= y tu contraseña.</p>';
+});
+setInterval(function () { if (actual !== 'viajes') cargar().then(pintar).catch(function () {}); }, 60000);
+</script>
+</body>
+</html>
